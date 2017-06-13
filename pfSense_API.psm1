@@ -382,12 +382,12 @@ Function Remove-pfSenseUser
         [bool] $NoTLS = $Session.NoTLS 
         [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
-        $strCommand = 'Get-pfSenseUserID -Server $Server -Session $Session'
+        
         
         If ($NoTLS) # highway to tha Danger Zone!!!
         {
             $uri = $uri -Replace "^https:",'http:'
-            $strCommand += ' -NoTLS'
+            
             Invoke-DebugIt -Console -Message '[WARNING]' -Value 'Insecure option selected (no TLS)' -Color 'Yellow'
         }
         
@@ -397,7 +397,7 @@ Function Remove-pfSenseUser
         $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
         # Get a list of deletable users. 
-        $objUsers = Invoke-Expression -Command $strCommand
+        $objUsers = Get-pfSenseUser -Session $Session
         
         # Get the ID of the username to be deleted. 
         Try
@@ -450,7 +450,116 @@ Function Remove-pfSenseUser
 
 Function Export-pfSenseUserCert
 {
-    # /system_certmanager.php
+    [CmdLetBinding()]
+    Param
+    (
+        [Parameter(Mandatory=$true, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$true, Position=1,
+                HelpMessage='User name'
+        )] [String] $UserName,
+        
+        [Parameter(Position=2)]
+        [ValidateSet('Cert','Key','P12')]
+        [String] $CertAction = 'Cert',
+        
+        [Parameter(Position=3)]
+        [ValidateScript({
+                    try {
+                        $Folder = Get-Item $_ -ErrorAction Stop
+                    } catch [System.Management.Automation.ItemNotFoundException] {
+                        Throw [System.Management.Automation.ItemNotFoundException] "${_} Maybe there are network issues?"
+                    }
+                    if ($Folder.PSIsContainer) {
+                        $True
+                    } else {
+                        Throw [System.Management.Automation.ValidationMetadataException] "The path '${_}' is not a container."
+                    }
+        })]
+        [String] $FilePath
+    )
+    
+    Begin
+    {
+        # Debugging for scripts
+        $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+    }
+    
+    Process
+    {
+        # Variables
+        $Server = $Session.host
+        [bool] $NoTLS = $Session.NoTLS 
+        [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
+        $uri = 'https://{0}/system_certmanager.php' -f $Server
+        
+        
+        If ($NoTLS) # highway to tha Danger Zone!!!
+        {
+            $uri = $uri -Replace "^https:",'http:'
+          
+            Invoke-DebugIt -Console -Message '[WARNING]' -Value 'Insecure option selected (no TLS)' -Color 'Yellow'
+        }
+        
+        Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
+        
+        # Get a list of deletable users. 
+        $objUsers = Get-pfSenseUser -Session $Session
+        
+        # Get the ID of the username to be deleted. 
+        Try
+        {
+            $userID = $objUsers | Where-Object {$_.Username -eq $UserName} | ForEach-Object {$_.UserID}
+            
+            Invoke-DebugIt -Console -Message '[INFO]' -Value ('User ID found: {0}' -f $userID)
+        }
+        
+        Catch
+        {
+            Write-Error -Message `
+            'Failed to get the user ID for the username provided. Check the username, and try again'
+            return
+        }
+        
+        Switch ($CertAction)
+        {
+            Key {
+                $uri += ('?act=key&id={0}' -f $userID)
+                $fExt = 'key'
+                Break
+            }
+            
+            P12 {
+                $uri += ('?act=p12&id={0}' -f $userID)
+                $fExt = 'p12'
+                Break
+            }
+            
+            Default {
+                $uri += ('?act=key&exp={0}' -f $userID)
+                $fExt = 'crt'
+                Break
+            }
+        }
+        
+        If (!$FilePath)
+        {
+            [String] $FilePath = ('{0}\{1}_pfSenseUserCertificate.{2}' -f $($PWD.Path), $UserName, $fExt)
+        }
+        
+        Invoke-DebugIt -Console -Message '[INFO]' -Value ('URI = {0}' -f $uri.ToString())
+
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        
+        ConvertFrom-HexToFile -HexString $request.Content -FilePath $FilePath
+    }
+    
+    End
+    {
+     
+    }
 }
 
 
@@ -635,6 +744,7 @@ Function Remove-pfSenseNatRule
 
 
 #endregion
+
 
 
 
