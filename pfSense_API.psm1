@@ -538,7 +538,7 @@ Function Export-pfSenseUserCert
             }
             
             Default {
-                $uri += ('?act=key&exp={0}' -f $userID)
+                $uri += ('?act=exp&id={0}' -f $userID)
                 $fExt = 'crt'
                 Break
             }
@@ -548,6 +548,8 @@ Function Export-pfSenseUserCert
         {
             [String] $FilePath = ('{0}\{1}_pfSenseUserCertificate.{2}' -f $($PWD.Path), $UserName, $fExt)
         }
+        
+        Invoke-DebugIt -Console -Message '[INFO]' -Value ('Export path = {0}' -f $FilePath) -Force 
         
         Invoke-DebugIt -Console -Message '[INFO]' -Value ('URI = {0}' -f $uri.ToString())
 
