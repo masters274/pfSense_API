@@ -168,19 +168,19 @@ Function Add-pfSenseUser
     [CmdletBinding(DefaultParameterSetName='NoCert')]
     Param
     (
-        [Parameter(Mandatory=$true, Position=1,
+        [Parameter(Mandatory=$true, Position=0,
                 HelpMessage='Valid/active websession to server'
-        )] [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
+        )] [PSObject] $Session,
         
-        [Parameter(Mandatory=$true, Position=2,
+        [Parameter(Mandatory=$true, Position=1,
                 HelpMessage='User name'
         )] [String] $UserName,
         
-        [Parameter(Mandatory=$true, Position=3,
+        [Parameter(Mandatory=$true, Position=2,
                 HelpMessage='Password for the user'
         )] [String] $Password,
         
-        [Parameter(Mandatory=$true, Position=4,
+        [Parameter(Mandatory=$true, Position=3,
                 HelpMessage='Display name for the user'
         )] [String] $FullName,
         
@@ -210,7 +210,7 @@ Function Add-pfSenseUser
         # Variables
         $Server = $Session.host
         [bool] $NoTLS = $Session.NoTLS 
-        $webSession = $Session[0]
+        [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
         
         If ($NoTLS) # highway to tha Danger Zone!!!
@@ -276,14 +276,14 @@ Function Add-pfSenseUser
 }
 
 
-Function Get-pfSenseUserID
+Function Get-pfSenseUser
 {
     [CmdLetBinding()]
     Param
     (
-        [Parameter(Mandatory=$true, Position=1,
+        [Parameter(Mandatory=$true, Position=0,
                 HelpMessage='Valid/active websession to server'
-        )] [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
+        )] [PSObject] $Session
     )
     
     Begin
@@ -314,7 +314,7 @@ Function Get-pfSenseUserID
         # Variables
         $Server = $Session.host
         [bool] $NoTLS = $Session.NoTLS 
-        $webSession = $Session[0]
+        [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
         
         If ($NoTLS) # highway to tha Danger Zone!!!
@@ -360,11 +360,11 @@ Function Remove-pfSenseUser
     [CmdLetBinding()]
     Param
     (
-        [Parameter(Mandatory=$true, Position=1,
+        [Parameter(Mandatory=$true, Position=0,
                 HelpMessage='Valid/active websession to server'
-        )] [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
+        )] [PSObject] $Session,
         
-        [Parameter(Mandatory=$true, Position=2,
+        [Parameter(Mandatory=$true, Position=1,
                 HelpMessage='User name'
         )] [String] $UserName
     )
@@ -380,7 +380,7 @@ Function Remove-pfSenseUser
         # Variables
         $Server = $Session.host
         [bool] $NoTLS = $Session.NoTLS 
-        $webSession = $Session[0]
+        [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
         $strCommand = 'Get-pfSenseUserID -Server $Server -Session $Session'
         
@@ -485,12 +485,12 @@ Function Backup-pfSenseConfig
     (
         [Parameter(
                 Mandatory=$true,
-                Position=1,
+                Position=0,
                 HelpMessage='Valid/active websession to server'
         )]
-        [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
+        [PSObject] $Session,
         
-        [Parameter(Position=2)]
+        [Parameter(Position=1)]
         [ValidateScript({
                     try {
                         $Folder = Get-Item $_ -ErrorAction Stop
@@ -505,6 +505,7 @@ Function Backup-pfSenseConfig
         })]
         [String] $FilePath = ('{0}\{1}_pfSenseBackup.xml' -f $($PWD.Path), $(Get-Date -UFormat '%Y%m%d_%H%M%S')),
         
+        [Parameter(Position=2)]
         [String] $EncryptPassword
     )
     
@@ -519,7 +520,7 @@ Function Backup-pfSenseConfig
         # Variables
         $Server = $Session.host
         [bool] $NoTLS = $Session.NoTLS 
-        $webSession = $Session[0]
+        [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
         $uri = 'https://{0}/diag_backup.php' -f $Server
     
         If ($NoTLS) # highway to tha Danger Zone!!!
