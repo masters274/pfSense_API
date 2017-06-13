@@ -180,6 +180,7 @@ Function Add-pfSenseUser
                 HelpMessage='Display name for the user'
         )] [String] $FullName,
         
+        [Parameter(ParameterSetName='Certificate')]
         [Switch] $Certificate,
         
         [Parameter(Mandatory=$false,ParameterSetName="NoCert")]
@@ -365,6 +366,14 @@ Function Remove-pfSenseUser
             return
         }
         
+        <#
+                - After we get the user ID, we need to check if the user has a certificate. 
+                - We need to revoke the certificate before we remove the user. User ID will not be
+                    found after the user has been deleted... 
+
+                Revoke-pfSenseUserCert
+        #>
+        
         # Dictionary submitted as body in our POST request
         $dictPostData = @{
             __csrf_magic=$($request.InputFields[0].Value)
@@ -399,7 +408,7 @@ Function Remove-pfSenseUser
 
 Function Export-pfSenseUserCert
 {
-    
+   # /system_certmanager.php
 }
 
 
@@ -542,6 +551,18 @@ Function Add-pfSenseStaticRoute
 
 
 Function Remove-pfSenseStaticRoute
+{
+    
+}
+
+
+Function Add-pfSenseGateway
+{
+    
+}
+
+
+Function Remove-pfSenseGateway
 {
     
 }
