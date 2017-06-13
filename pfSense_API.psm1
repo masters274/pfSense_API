@@ -55,6 +55,7 @@ If (!(Get-Module -Name core))
 
 #endregion
 
+#================================================= MEAT! =========================================================#
 
 #region Connection functions
 
@@ -96,6 +97,12 @@ Function Connect-pfSense
     {
         # Variables
         $uri = 'https://{0}/index.php' -f $Server
+        $pfWebSession = $null
+        $retObject = @()
+        $dictOptions = @{
+            host=$Server
+            NoTLS=$([bool] $NoTLS)
+        }
         
         If ($NoTLS) # highway to tha Danger Zone!!!
         {
@@ -113,9 +120,12 @@ Function Connect-pfSense
             __csrf_magic=$($request.InputFields[0].Value)
         }
 
-        iwr -Uri $uri -Body $webCredential -Method Post -SessionVariable pfWebSession | Out-Null
+        Invoke-WebRequest -Uri $uri -Body $webCredential -Method Post -SessionVariable pfWebSession | Out-Null
         
-        $pfWebSession
+        $retObject += $pfWebSession
+        $retObject += $dictOptions
+        
+        $retObject
     }
 }
 
@@ -158,12 +168,6 @@ Function Add-pfSenseUser
     [CmdletBinding(DefaultParameterSetName='NoCert')]
     Param
     (
-        [Parameter(Mandatory=$true, Position=0,
-                HelpMessage='Hostname of pfSesense server'
-        )]
-        [Alias('HostName')]
-        [String] $Server,
-        
         [Parameter(Mandatory=$true, Position=1,
                 HelpMessage='Valid/active websession to server'
         )] [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
@@ -192,9 +196,7 @@ Function Add-pfSenseUser
         
         [Int] $LifeTime = 3650,
         
-        [Switch] $Quiet, # No output upon completion
-        
-        [Switch] $NoTLS # Not recommended
+        [Switch] $Quiet # No output upon completion
     )
     
     Begin
@@ -206,6 +208,9 @@ Function Add-pfSenseUser
     Process
     {
         # Variables
+        $Server = $Session.host
+        [bool] $NoTLS = $Session.NoTLS 
+        $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
         
         If ($NoTLS) # highway to tha Danger Zone!!!
@@ -217,7 +222,7 @@ Function Add-pfSenseUser
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
         
         # pfSense requires a lot of magic.... ++ foreach POST 
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $Session
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
         $dictPostData = @{
             __csrf_magic=$($request.InputFields[0].Value)
@@ -248,7 +253,7 @@ Function Add-pfSenseUser
         
         Try
         {
-            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $Session -EA Stop |
+            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
             
             If ($rawRet.StatusCode -eq 200 -and -not $Quiet)
@@ -271,28 +276,14 @@ Function Add-pfSenseUser
 }
 
 
-Function Remove-pfSenseUser
+Function Get-pfSenseUserID
 {
     [CmdLetBinding()]
     Param
     (
-        [Parameter(Mandatory=$true, Position=0,
-                HelpMessage='Hostname of pfSesense server'
-        )]
-        [Alias('HostName')]
-        [String] $Server,
-        
         [Parameter(Mandatory=$true, Position=1,
                 HelpMessage='Valid/active websession to server'
         )] [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
-        
-        [Parameter(Mandatory=$true, Position=2,
-                HelpMessage='User name'
-        )] [String] $UserName,
-        
-        [Switch] $Quiet, # No output upon completion
-        
-        [Switch] $NoTLS # Not recommended
     )
     
     Begin
@@ -321,6 +312,9 @@ Function Remove-pfSenseUser
     Process
     {
         # Variables
+        $Server = $Session.host
+        [bool] $NoTLS = $Session.NoTLS 
+        $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
         
         If ($NoTLS) # highway to tha Danger Zone!!!
@@ -332,7 +326,7 @@ Function Remove-pfSenseUser
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
         
         # pfSense requires a lot of magic.... ++ foreach POST 
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $Session
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
         # Get a list of deletable users. 
         $objUsers = @()
@@ -351,6 +345,60 @@ Function Remove-pfSenseUser
             $objUsers += $objBuilder
         }
         
+        $objUsers
+    }
+    
+    End
+    {
+     
+    }        
+}
+
+
+Function Remove-pfSenseUser
+{
+    [CmdLetBinding()]
+    Param
+    (
+        [Parameter(Mandatory=$true, Position=1,
+                HelpMessage='Valid/active websession to server'
+        )] [Microsoft.PowerShell.Commands.WebRequestSession] $Session,
+        
+        [Parameter(Mandatory=$true, Position=2,
+                HelpMessage='User name'
+        )] [String] $UserName
+    )
+    
+    Begin
+    {
+        # Debugging for scripts
+        $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+    }
+    
+    Process
+    {
+        # Variables
+        $Server = $Session.host
+        [bool] $NoTLS = $Session.NoTLS 
+        $webSession = $Session[0]
+        $uri = 'https://{0}/system_usermanager.php' -f $Server
+        $strCommand = 'Get-pfSenseUserID -Server $Server -Session $Session'
+        
+        If ($NoTLS) # highway to tha Danger Zone!!!
+        {
+            $uri = $uri -Replace "^https:",'http:'
+            $strCommand += ' -NoTLS'
+            Invoke-DebugIt -Console -Message '[WARNING]' -Value 'Insecure option selected (no TLS)' -Color 'Yellow'
+        }
+        
+        Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
+        
+        # pfSense requires a lot of magic.... ++ foreach POST 
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        
+        # Get a list of deletable users. 
+        $objUsers = Invoke-Expression -Command $strCommand
+        
         # Get the ID of the username to be deleted. 
         Try
         {
@@ -362,14 +410,14 @@ Function Remove-pfSenseUser
         Catch
         {
             Write-Error -Message `
-                'Failed to get the user ID for the username provided. Check the username, and try again'
+            'Failed to get the user ID for the username provided. Check the username, and try again'
             return
         }
         
         <#
                 - After we get the user ID, we need to check if the user has a certificate. 
                 - We need to revoke the certificate before we remove the user. User ID will not be
-                    found after the user has been deleted... 
+                found after the user has been deleted... 
 
                 Revoke-pfSenseUserCert
         #>
@@ -383,14 +431,8 @@ Function Remove-pfSenseUser
         
         Try
         {
-            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $Session -EA Stop |
+            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
-            
-            If ($rawRet.StatusCode -eq 200 -and -not $Quiet)
-            {
-                Invoke-DebugIt -Console -Message 'Success' -Force -Color 'Green' `
-                -Value ('User: {0}, created successfully!' -f $FullName)
-            }
         }
         
         Catch
@@ -408,7 +450,7 @@ Function Remove-pfSenseUser
 
 Function Export-pfSenseUserCert
 {
-   # /system_certmanager.php
+    # /system_certmanager.php
 }
 
 
@@ -439,15 +481,8 @@ Function Backup-pfSenseConfig
     #>
     
     [CmdLetBinding()]
-    Param(
-        [Parameter(
-                Mandatory=$true,
-                Position=0,
-                HelpMessage='Hostname/IP of pfSesense server'
-        )]
-        [Alias('HostName')]
-        [String] $Server,
-        
+    Param
+    (
         [Parameter(
                 Mandatory=$true,
                 Position=1,
@@ -470,9 +505,7 @@ Function Backup-pfSenseConfig
         })]
         [String] $FilePath = ('{0}\{1}_pfSenseBackup.xml' -f $($PWD.Path), $(Get-Date -UFormat '%Y%m%d_%H%M%S')),
         
-        [String] $EncryptPassword,
-        
-        [Switch] $NoTLS # Not recommended
+        [String] $EncryptPassword
     )
     
     Begin
@@ -484,6 +517,9 @@ Function Backup-pfSenseConfig
     Process
     {
         # Variables
+        $Server = $Session.host
+        [bool] $NoTLS = $Session.NoTLS 
+        $webSession = $Session[0]
         $uri = 'https://{0}/diag_backup.php' -f $Server
     
         If ($NoTLS) # highway to tha Danger Zone!!!
@@ -495,7 +531,7 @@ Function Backup-pfSenseConfig
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
     
         # pfSense requires a lot of magic.... ++ foreach POST 
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $Session
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
     
     
         $dictPostData = @{
@@ -517,7 +553,7 @@ Function Backup-pfSenseConfig
     
         Try
         {
-            $rawRequest = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $Session -EA Stop
+            $rawRequest = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop
         }
         
         Catch
@@ -598,3 +634,10 @@ Function Remove-pfSenseNatRule
 
 
 #endregion
+
+
+
+
+
+
+
