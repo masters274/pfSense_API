@@ -1,6 +1,7 @@
+#requires -Version 3.0
 <#
         .Synopsis
-        pfSense management functions. 
+        pfSense management functions built for pfSense version 2.3.3-RELEASE
 
         .DESCRIPTION
         Haven't been able to find another API, or command line management for pfSense
@@ -21,6 +22,8 @@
 <#
         Version 0.1
         - Day one - it's my birfday!
+
+
 #>
 
 #endregion
@@ -283,7 +286,11 @@ Function Get-pfSenseUser
     (
         [Parameter(Mandatory=$true, Position=0,
                 HelpMessage='Valid/active websession to server'
-        )] [PSObject] $Session
+        )] [PSObject] $Session,
+        
+        [Switch] $CertInfo,
+        
+        [Switch] $Detail
     )
     
     Begin
@@ -307,11 +314,91 @@ Function Get-pfSenseUser
                 }
             }
         }
+        
+        Function Script:Decrypt-pfSenseBackupFile
+        {
+            Param
+            (
+                $file,
+                
+                [String] $Password
+            )
+            
+            # Get content of the file
+            
+            # Decrypt the data
+            
+            # Convert from Base64
+            
+            # Return the clear-text form contents as and XML object
+        }
     }
     
     Process
     {
         # Variables
+        $objUsers = @()
+        
+        
+        
+        If ($Detail)
+        {
+            # Haven't found a good way to get user details without the backup file... didn't want to do this
+            #TODO: Check if OpenSSL is installed, if so download the backup file encrypted with random password
+            
+            $tempFile = $env:TEMP + '\' + [guid]::NewGuid().guid + '.xml'
+            
+            
+            Backup-pfSenseConfig -Session $Session -FilePath $tempFile 
+            
+            [xml] $xmlFile = Get-Content -Path $tempFile -Encoding Ascii
+            Remove-Item -Path $tempFile -Force # Don't need this just laying around. 
+            
+            Foreach ($user in $xmlFile.pfsense.system.user)
+            {
+                # Cert info if exists
+                $objCert = $xmlFile.pfsense.cert | ? {$_.refid -eq $user.cert}
+                $objCA = $xmlFile.pfsense.ca | ? {$_.refid -eq $objCert.caref}
+                
+                
+                
+                $objBuilder = New-Object -TypeName PSObject
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Username' -Value $user.name
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Expiration' -Value $user.expires
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'System_UID' -Value $user.uid
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'User_Type' -Value $user.scope
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Cert' -Value $objCert.descr.'#cdata-section'
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Cert_ID' -Value $user.cert
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'CA' -Value $objCA.descr.'#cdata-section'
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'CA_ID' -Value $objCA.refid
+                
+                
+                $objUsers += $objBuilder
+            }
+            
+            $objUsers
+            
+            Return # No need to continue
+        }
+        
+        #--------------------------------------------------------------------------------------#
+
         $Server = $Session.host
         [bool] $NoTLS = $Session.NoTLS 
         [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
@@ -329,7 +416,6 @@ Function Get-pfSenseUser
         $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
         # Get a list of deletable users. 
-        $objUsers = @()
         $users = $request.Links | Where-Deleteable # Note: can't delete yourself
         
         # Build an array with usernames and IDs, which can be deleted by the current user. 
@@ -338,9 +424,36 @@ Function Get-pfSenseUser
             $uname = $user.href.Split(';').Replace('&amp','').Trim() -match 'username'
             $uid = $user.href.Split(';').Replace('&amp','').Trim() -match 'userid'
             
+            
             $objBuilder = New-Object -TypeName PSObject
             $objBuilder | Add-Member -MemberType NoteProperty -Name 'Username' -Value $($uname.Split('=')[1])
             $objBuilder | Add-Member -MemberType NoteProperty -Name 'UserID' -Value $($uid.Split('=')[1])
+            
+            If ($CertInfo)
+            {
+                
+                $userEditUri = $uri + ('?act=edit&userid={0}' -f $($uid.Split('=')[1]))
+                $userReq = Invoke-WebRequest -Uri $userEditUri -WebSession $webSession -Method Get
+                
+                $cert = $userReq.ParsedHtml.frames.document.body.outerHTML.Split("`n") | 
+                Where-Object {$_ -match "Remove this certificate association"}
+                    
+                If ($cert)
+                {
+                    #$certName = ''
+                    $boolCert = $true
+                }
+                
+                Else
+                {
+                    #$certName = $null
+                    $boolCert = $false
+                }
+                
+                $objBuilder | Add-Member -MemberType NoteProperty -Name 'Cert' -Value $boolCert
+                #$objBuilder | Add-Member -MemberType NoteProperty -Name 'CertName' -Value $certName
+                
+            }
             
             $objUsers += $objBuilder
         }
@@ -604,14 +717,14 @@ Function Backup-pfSenseConfig
         [Parameter(Position=1)]
         [ValidateScript({
                     try {
-                        $Folder = Get-Item $_ -ErrorAction Stop
+                        $Folder = Get-Item $($_ |Split-Path -Parent) -ErrorAction Stop
                     } catch [System.Management.Automation.ItemNotFoundException] {
                         Throw [System.Management.Automation.ItemNotFoundException] "${_} Maybe there are network issues?"
                     }
                     if ($Folder.PSIsContainer) {
                         $True
                     } else {
-                        Throw [System.Management.Automation.ValidationMetadataException] "The path '${_}' is not a container."
+                        Throw [System.Management.Automation.ValidationMetadataException] "Invalid path '${_}'."
                     }
         })]
         [String] $FilePath = ('{0}\{1}_pfSenseBackup.xml' -f $($PWD.Path), $(Get-Date -UFormat '%Y%m%d_%H%M%S')),
@@ -656,6 +769,7 @@ Function Backup-pfSenseConfig
         {
             $dictSecurity = @{
                 encrypt_password="$EncryptPassword" 
+                encrypt="yes"
             }
         
             $dictPostData += $dictSecurity
