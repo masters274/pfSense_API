@@ -338,64 +338,7 @@ Function Get-pfSenseUser
     {
         # Variables
         $objUsers = @()
-        
-        
-        
-        If ($Detail)
-        {
-            # Haven't found a good way to get user details without the backup file... didn't want to do this
-            #TODO: Check if OpenSSL is installed, if so download the backup file encrypted with random password
-            
-            $tempFile = $env:TEMP + '\' + [guid]::NewGuid().guid + '.xml'
-            
-            
-            Backup-pfSenseConfig -Session $Session -FilePath $tempFile 
-            
-            [xml] $xmlFile = Get-Content -Path $tempFile -Encoding Ascii
-            Remove-Item -Path $tempFile -Force # Don't need this just laying around. 
-            
-            Foreach ($user in $xmlFile.pfsense.system.user)
-            {
-                # Cert info if exists
-                $objCert = $xmlFile.pfsense.cert | ? {$_.refid -eq $user.cert}
-                $objCA = $xmlFile.pfsense.ca | ? {$_.refid -eq $objCert.caref}
-                
-                
-                
-                $objBuilder = New-Object -TypeName PSObject
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'Username' -Value $user.name
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'Expiration' -Value $user.expires
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'System_UID' -Value $user.uid
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'User_Type' -Value $user.scope
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'Cert' -Value $objCert.descr.'#cdata-section'
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'Cert_ID' -Value $user.cert
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'CA' -Value $objCA.descr.'#cdata-section'
-                
-                $objBuilder | 
-                Add-Member -MemberType NoteProperty -Name 'CA_ID' -Value $objCA.refid
-                
-                
-                $objUsers += $objBuilder
-            }
-            
-            $objUsers
-            
-            Return # No need to continue
-        }
+        $objUsersDetail = @()
         
         #--------------------------------------------------------------------------------------#
 
@@ -458,7 +401,67 @@ Function Get-pfSenseUser
             $objUsers += $objBuilder
         }
         
-        $objUsers
+        If ($Detail)
+        {
+            # Haven't found a good way to get user details without the backup file... didn't want to do this
+            #TODO: Check if OpenSSL is installed, if so download the backup file encrypted with random password
+            
+            $tempFile = $env:TEMP + '\' + [guid]::NewGuid().guid + '.xml'
+            
+            
+            Backup-pfSenseConfig -Session $Session -FilePath $tempFile 
+            
+            [xml] $xmlFile = Get-Content -Path $tempFile -Encoding Ascii
+            Remove-Item -Path $tempFile -Force # Don't need this just laying around. 
+            
+            Foreach ($user in $xmlFile.pfsense.system.user)
+            {
+                # Cert info if exists
+                $objCert = $xmlFile.pfsense.cert | ? {$_.refid -eq $user.cert}
+                $objCA = $xmlFile.pfsense.ca | ? {$_.refid -eq $objCert.caref}
+                $uid = $objUsers | ? {$_.username -eq $user.name} | %{$_.userid}
+                
+                
+                $objBuilder = New-Object -TypeName PSObject
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Username' -Value $user.name
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'System_UID' -Value $user.uid
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'UserID' -Value $uid
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Expiration' -Value $user.expires
+
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'User_Type' -Value $user.scope
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Cert' -Value $objCert.descr.'#cdata-section'
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'Cert_ID' -Value $user.cert
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'CA' -Value $objCA.descr.'#cdata-section'
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'CA_ID' -Value $objCA.refid
+                
+                
+                $objUsersDetail += $objBuilder
+            }
+            
+            $objUsersDetail
+        }
+        
+        Else
+        {
+            $objUsers
+        }
     }
     
     End
