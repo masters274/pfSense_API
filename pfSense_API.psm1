@@ -288,6 +288,9 @@ Function Get-pfSenseUser
                 HelpMessage='Valid/active websession to server'
         )] [PSObject] $Session,
         
+        [Parameter(Position=1)]
+        [String] $UserName,
+        
         [Switch] $CertInfo,
         
         [Switch] $Detail
@@ -462,12 +465,48 @@ Function Get-pfSenseUser
                 $objUsersDetail += $objBuilder
             }
             
-            $objUsersDetail
+            If ($Username)
+            {
+                Try
+                {
+                    $objUsersDetail | Where-Object {$_.Username -eq $UserName}
+                }
+                
+                Catch
+                {
+                    Write-Host -ForegroundColor Red "Username $UserName not found"
+                    
+                    $objUsersDetail
+                }
+            }
+            
+            Else
+            {
+                $objUsersDetail
+            }
         }
         
         Else
         {
-            $objUsers
+            If ($Username)
+            {
+                Try
+                {
+                    $objUsers | Where-Object {$_.Username -eq $UserName}
+                }
+                
+                Catch
+                {
+                    Write-Host -ForegroundColor Red "Username $UserName not found"
+                    
+                    $objUsers
+                }
+            }
+            
+            Else
+            {
+                $objUsers
+            }
         }
     }
     
@@ -690,7 +729,132 @@ Function Export-pfSenseUserCert
 
 Function Revoke-pfSenseUserCert
 {
+    Param
+    (
+        [Parameter(Mandatory=$true, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$true, Position=1,
+                HelpMessage='User name'
+        )] [String] $UserName, 
+        
+        [ValidateSet('No Status (default)', 'Unspecified', 'Key Compromise', 'CA Compromise', 
+                'Affiliation Change', 'Superseded', 'Cessation of Operation', 'Certificate Hold'
+        )] [String] $Reason = 'Unspecified'
+    )
     
+    Begin
+    {
+        
+    }
+    
+    Process
+    {
+        # Variables
+        $Server = $Session.host
+        [bool] $NoTLS = $Session.NoTLS 
+        [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
+        $user = Get-pfSenseUser -Session $Session -Detail -UserName $UserName
+    
+        $dictReason = @{
+            'No Status (default)' = '-1'
+            'Unspecified' = 0
+            'Key Compromise' = 1
+            'CA Compromise' = 2
+            'Affiliation Changed' = 3
+            'Superseded' = 4
+            'Cessation of Operation' = 5
+            'Certificate Hold' = 6
+        }
+    
+        If ($user.count -gt 1 -or $user -eq $null)
+        {
+            Write-Error -Message ('Failed to get username {0}' -f $UserName)
+            Return
+        }
+    
+        If (!$user.CRL_ID)
+        {
+            Write-Error -Message ('No CRL for {0}' -f $UserName)
+            Return
+        }
+    
+        $uri = 'https://{0}/system_crlmanager.php?act=edit&id={1}' -f $Server, $user.CRL_ID
+        
+        If ($NoTLS) # highway to tha Danger Zone!!!
+        {
+            $uri = $uri -Replace "^https:",'http:'
+            Invoke-DebugIt -Console -Message '[WARNING]' -Value 'Insecure option selected (no TLS)' -Color 'Yellow'
+        }
+        
+        Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
+    
+    
+        # pfSense requires a lot of magic.... ++ foreach POST 
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+    
+        # Dictionary submitted as body in our POST request
+        $dictPostData = @{
+            __csrf_magic=$($request.InputFields[0].Value)
+            certref=$($user.Cert_ID)
+            crlreason=$($dictReason["$Reason"])
+            submit='Add'
+            id=$($user.CRL_ID)
+            act='addcert'
+            crlref=$($user.CRL_ID)
+        }
+    
+        Try
+        {
+            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
+            Out-Null
+        }
+        
+        Catch
+        {
+            Write-Error -Message 'Something went wrong submitting the form'
+        }
+    }
+    
+    End
+    {
+    
+    }
+}
+
+
+Function Restore-pfSenseUserCert
+{
+    <#
+            Un-Revoke: Remove a user's certificate from a CRL
+    #>
+    
+        Param
+    (
+        [Parameter(Mandatory=$true, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$true, Position=1,
+                HelpMessage='User name'
+        )] [String] $UserName
+    )
+    
+    Begin
+    {
+        
+    }
+    
+    Process
+    {
+        
+    }
+    
+    End
+    {
+    
+    }
 }
 
 
