@@ -420,6 +420,7 @@ Function Get-pfSenseUser
                 $objCert = $xmlFile.pfsense.cert | ? {$_.refid -eq $user.cert}
                 $objCA = $xmlFile.pfsense.ca | ? {$_.refid -eq $objCert.caref}
                 $uid = $objUsers | ? {$_.username -eq $user.name} | %{$_.userid}
+                $objCrl = $xmlFile.pfsense.crl | ? {$_.caref -eq $objCA.refid}
                 
                 
                 $objBuilder = New-Object -TypeName PSObject
@@ -451,6 +452,12 @@ Function Get-pfSenseUser
                 $objBuilder | 
                 Add-Member -MemberType NoteProperty -Name 'CA_ID' -Value $objCA.refid
                 
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'CRL' -Value $objCrl.descr.'#cdata-section'
+                
+                $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'CRL_ID' -Value $objCrl.refid
+                
                 
                 $objUsersDetail += $objBuilder
             }
@@ -466,7 +473,7 @@ Function Get-pfSenseUser
     
     End
     {
-     
+        
     }        
 }
 
@@ -863,11 +870,3 @@ Function Remove-pfSenseNatRule
 
 
 #endregion
-
-
-
-
-
-
-
-
