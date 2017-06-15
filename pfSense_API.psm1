@@ -97,10 +97,20 @@ Function Connect-pfSense
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
 
         # pfSense requires TLS1.2 This is not an available security protocol in Invoke-WebRequest by default
-        If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $no)
+        If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $NoTLS)
         {
             [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
         }
+        
+        <#
+                .NOTE: might be a good idea to add this to your $profile. Default is SSLv3 for Posh web commands!!!
+
+                # Security protocols for web calls. removes SSL3 and TLS1.0
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS11
+                [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
+
+                ...Just a suggestion
+        #>
     }
     
     Process
@@ -840,7 +850,7 @@ Function Restore-pfSenseUserCert
             Un-Revoke: Remove a user's certificate from a CRL
     #>
     
-        Param
+    Param
     (
         [Parameter(Mandatory=$true, Position=0,
                 HelpMessage='Valid/active websession to server'
@@ -1043,6 +1053,11 @@ Function Add-pfSenseFirewallRule
 }
 
 
+Function Get-pfSenseFirewallRule
+{
+}
+
+
 Function Remove-pfSenseFirewallRule
 {
     
@@ -1052,6 +1067,11 @@ Function Remove-pfSenseFirewallRule
 Function Add-pfSenseNatRule
 {
 
+}
+
+
+Function Get-pfSenseNatRule
+{
 }
 
 
