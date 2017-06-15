@@ -97,7 +97,7 @@ Function Connect-pfSense
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
 
         # pfSense requires TLS1.2 This is not an available security protocol in Invoke-WebRequest by default
-        If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $NoTLS)
+        If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $no)
         {
             [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
         }
@@ -537,7 +537,9 @@ Function Remove-pfSenseUser
         
         [Parameter(Mandatory=$true, Position=1,
                 HelpMessage='User name'
-        )] [String] $UserName
+        )] [String] $UserName,
+        
+        [Switch] $RevokeCert
     )
     
     Begin
@@ -568,14 +570,14 @@ Function Remove-pfSenseUser
         $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
         # Get a list of deletable users. 
-        $objUsers = Get-pfSenseUser -Session $Session
+        $objUser = Get-pfSenseUser -Session $Session -Detail -UserName $UserName
         
         # Get the ID of the username to be deleted. 
         Try
         {
-            $userID = $objUsers | Where-Object {$_.Username -eq $UserName} | ForEach-Object {$_.UserID}
+            [bool] (!($objUser.UserID -eq $null))
             
-            Invoke-DebugIt -Console -Message '[INFO]' -Value ('User ID found: {0}' -f $userID)
+            Invoke-DebugIt -Console -Message '[INFO]' -Value ('User ID found: {0}' -f $objUser.UserID)
         }
         
         Catch
@@ -585,18 +587,17 @@ Function Remove-pfSenseUser
             return
         }
         
-        <#
-                - After we get the user ID, we need to check if the user has a certificate. 
-                - We need to revoke the certificate before we remove the user. User ID will not be
-                found after the user has been deleted... 
-
-                Revoke-pfSenseUserCert
-        #>
+        
+        If ($RevokeCert)
+        {
+            Revoke-pfSenseUserCert -Session $Session -UserName $UserName -Reason 'Cessation of Operation'
+        }
+        
         
         # Dictionary submitted as body in our POST request
         $dictPostData = @{
             __csrf_magic=$($request.InputFields[0].Value)
-            'delete_check[]'=$userID
+            'delete_check[]'=$($objUser.UserID)
             'dellall'='dellall'
         }
         
@@ -989,9 +990,21 @@ Function Backup-pfSenseConfig
 }
 
 
+Function Restore-pfSenseConfig
+{
+
+}
+
+
 Function Add-pfSenseStaticRoute
 {
     
+}
+
+
+Function Get-pfSenseStaticRoute
+{
+
 }
 
 
@@ -1002,6 +1015,12 @@ Function Remove-pfSenseStaticRoute
 
 
 Function Add-pfSenseGateway
+{
+    
+}
+
+
+Function Get-pfSenseGateway
 {
     
 }
