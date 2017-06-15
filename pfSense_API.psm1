@@ -68,6 +68,7 @@ Function Connect-pfSense
     <#
             .DESCRIPTION
             Authenticates to a pfSense server and returns the session variable
+            
     #>
     [CmdLetBinding()]
     Param
@@ -94,6 +95,12 @@ Function Connect-pfSense
     {
         # Debugging for scripts
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+
+        # pfSense requires TLS1.2 This is not an available security protocol in Invoke-WebRequest by default
+        If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $NoTLS)
+        {
+            [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
+        }
     }
     
     Process
@@ -407,7 +414,9 @@ Function Get-pfSenseUser
         If ($Detail)
         {
             # Haven't found a good way to get user details without the backup file... didn't want to do this
-            #TODO: Check if OpenSSL is installed, if so download the backup file encrypted with random password
+            # DEPRICATED - TODO: Check if OpenSSL is installed, if so download the backup file encrypted with random password
+            # DEPRICATED - TODO: use [System.Security.Cryptography.AESManaged] to decrypt the config file
+            # TODO: Create the XML object in variable. Do not save file to disk. 
             
             $tempFile = $env:TEMP + '\' + [guid]::NewGuid().guid + '.xml'
             
