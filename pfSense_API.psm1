@@ -1,7 +1,7 @@
 #requires -Version 3.0
 <#
         .Synopsis
-        pfSense management functions built for pfSense version 2.3.3-RELEASE
+        pfSense management functions built for pfSense version 2.x
 
         .DESCRIPTION
         Haven't been able to find another API, or command line management for pfSense
@@ -15,18 +15,6 @@
         .FUNCTIONALITY
         pfSense task automation and scriptability
 #>
-
-
-#region Verion Info
-
-<#
-        Version 0.1
-        - Day one - it's my birfday!
-
-
-#>
-
-#endregion
 
 #region Prerequisites
 
@@ -88,7 +76,9 @@ Function Connect-pfSense
         )]
         [PSCredential] $Credential,
         
-        [Switch] $NoTLS # Not recommended
+        [Switch] $NoTLS, # Not recommended
+        
+        [Switch] $IgnoreCertificateErrors
     )
     
     Begin
@@ -100,6 +90,50 @@ Function Connect-pfSense
         If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $NoTLS)
         {
             [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
+        }
+        
+        <#
+                .NOTE: might be a good idea to add this to your $profile. Default is SSLv3 for Posh web commands!!!
+
+                # Security protocols for web calls. removes SSL3 and TLS1.0
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS11
+                [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
+
+                ...Just a suggestion
+        #>
+        
+        If ($IgnoreCertificateErrors)
+        {
+            Try
+            {
+                Add-Type -TypeDefinition @'
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+
+public class InSecureWebPolicy : ICertificatePolicy 
+{
+    public bool CheckValidationResult(ServicePoint sPoint, X509Certificate cert,WebRequest wRequest, int certProb)
+    {
+        return true;
+    }
+}
+'@
+            }
+            Catch
+            {}
+            
+            $pol = [System.Net.ServicePointManager]::CertificatePolicy
+            [System.Net.ServicePointManager]::CertificatePolicy = New-Object -TypeName InSecureWebPolicy
+            
+            <#
+                    .NOTE: There is a timeout value to using this option. At the end of this function the
+                    policy is returned to its original configuration. PowerShell takes a little time, almost
+                    like cache, to recognize the reversion. Therefore this option is only good for fast 
+                    scripting, and not for coding on the command line. 
+
+                    It is recommended that you import the cert into your trusted certificates store
+            #>
+            
         }
     }
     
@@ -136,6 +170,11 @@ Function Connect-pfSense
         $retObject += $dictOptions
         
         $retObject
+    }
+    
+    End
+    {
+        [System.Net.ServicePointManager]::CertificatePolicy = $pol
     }
 }
 
@@ -188,7 +227,8 @@ Function Add-pfSenseUser
         
         [Parameter(Mandatory=$true, Position=2,
                 HelpMessage='Password for the user'
-        )] [String] $Password,
+        )] [Alias('Password')]
+        [String] $UserPass,
         
         [Parameter(Mandatory=$true, Position=3,
                 HelpMessage='Display name for the user'
@@ -213,6 +253,8 @@ Function Add-pfSenseUser
     {
         # Debugging for scripts
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+        
+        $Password = $UserPass
     }
     
     Process
@@ -295,7 +337,8 @@ Function Get-pfSenseUser
                 HelpMessage='Valid/active websession to server'
         )] [PSObject] $Session,
         
-        [Parameter(Position=1)]
+        [AllowNull()]
+        [Parameter(Position=1)] 
         [String] $UserName,
         
         [Switch] $CertInfo,
@@ -323,24 +366,6 @@ Function Get-pfSenseUser
                     $InputObject
                 }
             }
-        }
-        
-        Function Script:Decrypt-pfSenseBackupFile
-        {
-            Param
-            (
-                $file,
-                
-                [String] $Password
-            )
-            
-            # Get content of the file
-            
-            # Decrypt the data
-            
-            # Convert from Base64
-            
-            # Return the clear-text form contents as and XML object
         }
     }
     
@@ -413,18 +438,9 @@ Function Get-pfSenseUser
         
         If ($Detail)
         {
-            # Haven't found a good way to get user details without the backup file... didn't want to do this
-            # DEPRICATED - TODO: Check if OpenSSL is installed, if so download the backup file encrypted with random password
-            # DEPRICATED - TODO: use [System.Security.Cryptography.AESManaged] to decrypt the config file
-            # TODO: Create the XML object in variable. Do not save file to disk. 
-            
             $tempFile = $env:TEMP + '\' + [guid]::NewGuid().guid + '.xml'
-            
-            
-            Backup-pfSenseConfig -Session $Session -FilePath $tempFile 
-            
-            [xml] $xmlFile = Get-Content -Path $tempFile -Encoding Ascii
-            Remove-Item -Path $tempFile -Force # Don't need this just laying around. 
+
+            [xml] $xmlFile = Backup-pfSenseConfig -Session $Session -OutputXML
             
             Foreach ($user in $xmlFile.pfsense.system.user)
             {
@@ -474,7 +490,7 @@ Function Get-pfSenseUser
                 $objUsersDetail += $objBuilder
             }
             
-            If ($Username)
+            If ($UserName)
             {
                 Try
                 {
@@ -497,7 +513,7 @@ Function Get-pfSenseUser
         
         Else
         {
-            If ($Username)
+            If ($UserName)
             {
                 Try
                 {
@@ -521,7 +537,8 @@ Function Get-pfSenseUser
     
     End
     {
-        
+        Remove-Variable -Name xmlFile -Force -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        [GC]::Collect()
     }        
 }
 
@@ -537,7 +554,9 @@ Function Remove-pfSenseUser
         
         [Parameter(Mandatory=$true, Position=1,
                 HelpMessage='User name'
-        )] [String] $UserName
+        )] [String] $UserName,
+        
+        [Switch] $RevokeCert
     )
     
     Begin
@@ -568,14 +587,14 @@ Function Remove-pfSenseUser
         $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
         # Get a list of deletable users. 
-        $objUsers = Get-pfSenseUser -Session $Session
+        $objUser = Get-pfSenseUser -Session $Session -Detail -UserName $UserName
         
         # Get the ID of the username to be deleted. 
         Try
         {
-            $userID = $objUsers | Where-Object {$_.Username -eq $UserName} | ForEach-Object {$_.UserID}
+            [bool] (!($objUser.UserID -eq $null))
             
-            Invoke-DebugIt -Console -Message '[INFO]' -Value ('User ID found: {0}' -f $userID)
+            Invoke-DebugIt -Console -Message '[INFO]' -Value ('User ID found: {0}' -f $objUser.UserID)
         }
         
         Catch
@@ -585,18 +604,17 @@ Function Remove-pfSenseUser
             return
         }
         
-        <#
-                - After we get the user ID, we need to check if the user has a certificate. 
-                - We need to revoke the certificate before we remove the user. User ID will not be
-                found after the user has been deleted... 
-
-                Revoke-pfSenseUserCert
-        #>
+        
+        If ($RevokeCert)
+        {
+            Revoke-pfSenseUserCert -Session $Session -UserName $UserName -Reason 'Cessation of Operation'
+        }
+        
         
         # Dictionary submitted as body in our POST request
         $dictPostData = @{
             __csrf_magic=$($request.InputFields[0].Value)
-            'delete_check[]'=$userID
+            'delete_check[]'=$($objUser.UserID)
             'dellall'='dellall'
         }
         
@@ -639,7 +657,7 @@ Function Export-pfSenseUserCert
         [Parameter(Position=3)]
         [ValidateScript({
                     try {
-                        $Folder = Get-Item $_ -ErrorAction Stop
+                        $Folder = Get-Item $($_ |Split-Path -Parent) -ErrorAction Stop
                     } catch [System.Management.Automation.ItemNotFoundException] {
                         Throw [System.Management.Automation.ItemNotFoundException] "${_} Maybe there are network issues?"
                     }
@@ -656,6 +674,77 @@ Function Export-pfSenseUserCert
     {
         # Debugging for scripts
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+        
+        Function Script:Extract-WebTable
+        { # code from Lee Holmes 
+            # http://www.leeholmes.com/blog/2015/01/05/extracting-tables-from-powershells-invoke-webrequest/
+            Param
+            (
+                [Parameter(Mandatory = $true)]
+                [Microsoft.PowerShell.Commands.HtmlWebResponseObject] $WebRequest,
+
+                [Parameter(Mandatory = $true)]
+                [int] $TableNumber
+            )
+
+            ## Extract the tables out of the web request
+
+            $tables = @($WebRequest.ParsedHtml.getElementsByTagName("TABLE"))
+
+            $table = $tables[$TableNumber]
+
+            $titles = @()
+
+            $rows = @($table.Rows)
+
+            ## Go through all of the rows in the table
+
+            foreach($row in $rows)
+            {
+                $cells = @($row.Cells)
+
+                ## If we've found a table header, remember its titles
+
+                if($cells[0].tagName -eq "TH")
+                {
+                    $titles = @($cells | % { ("" + $_.InnerText).Trim() })
+
+                    continue
+                }
+
+                ## If we haven't found any table headers, make up names "P1", "P2", etc.
+
+                if(-not $titles)
+                {
+                    $titles = @(1..($cells.Count + 2) | % { "P$_" })
+                }
+
+                ## Now go through the cells in the the row. For each, try to find the
+
+                ## title that represents that column and create a hashtable mapping those
+
+                ## titles to content
+
+                $resultObject = [Ordered] @{}
+
+                for($counter = 0; $counter -lt $cells.Count; $counter++)
+                {
+
+                    $title = $titles[$counter]
+
+                    if(-not $title) { continue }
+
+
+
+                    $resultObject[$title] = ("" + $cells[$counter].InnerText).Trim()
+
+                }
+
+                ## And finally cast that hashtable to a PSCustomObject
+
+                [PSCustomObject] $resultObject
+            }
+        }
     }
     
     Process
@@ -676,23 +765,13 @@ Function Export-pfSenseUserCert
         
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
         
-        # Get a list of deletable users. 
-        $objUsers = Get-pfSenseUser -Session $Session
+        # Get the page contents so we can parse the table. We'll need the iterated ID based on the web table.
+        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
-        # Get the ID of the username to be deleted. 
-        Try
-        {
-            $userID = $objUsers | Where-Object {$_.Username -eq $UserName} | ForEach-Object {$_.UserID}
-            
-            Invoke-DebugIt -Console -Message '[INFO]' -Value ('User ID found: {0}' -f $userID)
-        }
+        $objTable = Extract-WebTable -WebRequest $request -TableNumber 0
         
-        Catch
-        {
-            Write-Error -Message `
-            'Failed to get the user ID for the username provided. Check the username, and try again'
-            return
-        }
+        # get the ID of the user on the page
+        $userID = $objTable.IndexOf(($objTable | Where-Object {$_.name -match $UserName}))
         
         Switch ($CertAction)
         {
@@ -724,9 +803,9 @@ Function Export-pfSenseUserCert
         
         Invoke-DebugIt -Console -Message '[INFO]' -Value ('URI = {0}' -f $uri.ToString())
 
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $exRequest = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
-        ConvertFrom-HexToFile -HexString $request.Content -FilePath $FilePath
+        ConvertFrom-HexToFile -HexString $exRequest.Content -FilePath $FilePath
     }
     
     End
@@ -839,7 +918,7 @@ Function Restore-pfSenseUserCert
             Un-Revoke: Remove a user's certificate from a CRL
     #>
     
-        Param
+    Param
     (
         [Parameter(Mandatory=$true, Position=0,
                 HelpMessage='Valid/active websession to server'
@@ -898,9 +977,12 @@ Function Backup-pfSenseConfig
         [PSObject] $Session,
         
         [Parameter(Position=1)]
+        [Switch] $OutputXML,
+        
+        [Parameter(Position=1)]
         [ValidateScript({
                     try {
-                        $Folder = Get-Item $($_ |Split-Path -Parent) -ErrorAction Stop
+                        $Folder = Get-Item $($_ | Split-Path -Parent) -ErrorAction Stop
                     } catch [System.Management.Automation.ItemNotFoundException] {
                         Throw [System.Management.Automation.ItemNotFoundException] "${_} Maybe there are network issues?"
                     }
@@ -912,7 +994,7 @@ Function Backup-pfSenseConfig
         })]
         [String] $FilePath = ('{0}\{1}_pfSenseBackup.xml' -f $($PWD.Path), $(Get-Date -UFormat '%Y%m%d_%H%M%S')),
         
-        [Parameter(Position=2)]
+        [Parameter(Position=2, ParameterSetName='ToDisk')]
         [String] $EncryptPassword
     )
     
@@ -972,8 +1054,18 @@ Function Backup-pfSenseConfig
     
         If ($rawRequest)
         {
-            Invoke-DebugIt -Console -Message '[INFO]' -Value ('Output file: {0}' -f $FilePath)
-            ConvertFrom-HexToFile -HexString $rawRequest.Content -FilePath $FilePath
+            If ($OutputXML)
+            {
+                $Encoder = [System.Text.Encoding]::ASCII
+                $retVal = $Encoder.GetString($rawRequest.Content)
+                
+                $retVal
+            }
+            Else
+            {
+                Invoke-DebugIt -Console -Message '[INFO]' -Value ('Output file: {0}' -f $FilePath)
+                ConvertFrom-HexToFile -HexString $rawRequest.Content -FilePath $FilePath
+            }
         }
     
         Else
@@ -989,9 +1081,21 @@ Function Backup-pfSenseConfig
 }
 
 
+Function Restore-pfSenseConfig
+{
+
+}
+
+
 Function Add-pfSenseStaticRoute
 {
     
+}
+
+
+Function Get-pfSenseStaticRoute
+{
+
 }
 
 
@@ -1002,6 +1106,12 @@ Function Remove-pfSenseStaticRoute
 
 
 Function Add-pfSenseGateway
+{
+    
+}
+
+
+Function Get-pfSenseGateway
 {
     
 }
@@ -1024,6 +1134,11 @@ Function Add-pfSenseFirewallRule
 }
 
 
+Function Get-pfSenseFirewallRule
+{
+}
+
+
 Function Remove-pfSenseFirewallRule
 {
     
@@ -1033,6 +1148,11 @@ Function Remove-pfSenseFirewallRule
 Function Add-pfSenseNatRule
 {
 
+}
+
+
+Function Get-pfSenseNatRule
+{
 }
 
 
