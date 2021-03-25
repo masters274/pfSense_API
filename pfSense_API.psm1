@@ -1,4 +1,3 @@
-#requires -Version 3.0
 <#
         .Synopsis
         pfSense management functions built for pfSense version 2.x
@@ -19,30 +18,10 @@
 #region Prerequisites
 
 # All modules require the core
-If (!(Get-Module -Name core))
-{
-    Try
-    {
-        Import-Module -Name 'core' -ErrorAction Stop
-    }
 
-    Catch
-    {
-        Try
-        {
-            $uriCoreModule = 'https://raw.githubusercontent.com/masters274/Posh_Repo/master/Modules/Core/core.psm1'
-    
-            $moduleCode = (Invoke-WebRequest -Uri $uriCoreModule -UseBasicParsing).Content
-            
-            Invoke-Expression -Command $moduleCode
-        }
-    
-        Catch
-        {
-            Write-Error -Message ('Failed to load {0}, due to missing core module' -f $PSScriptRoot)
-        }
-    }
-}
+<#
+        Great news! The core module is now installed automatically when installed from PSGallery
+#>
 
 #endregion
 
@@ -85,8 +64,13 @@ Function Connect-pfSense
     {
         # Debugging for scripts
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+        
+        # Is -Force set?
+        # TODO: use to avoid asking if we should ignore self-signed web certs
+        $Script:boolForce = $PSBoundParameters.Force.IsPresent
 
         # pfSense requires TLS1.2 This is not an available security protocol in Invoke-WebRequest by default
+        # TODO: use available function  (Set-WebSecurityProtocol)
         If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $NoTLS)
         {
             [Net.ServicePointManager]::SecurityProtocol += [Net.SecurityProtocolType]::TLS12
@@ -102,6 +86,11 @@ Function Connect-pfSense
                 ...Just a suggestion
         #>
         
+        # TODO: use available function  (Set-WebCertificatePolicy)
+        # Warn the user user that security will be degraded, and ask if they would like to proceed. 
+        # Check if they have the proper version of core use the function to Set-WebCertificatePolicy
+        # Require that core be updated
+        # Add a note on how to revert the security policy back to the original, without restarting PowerShell
         If ($IgnoreCertificateErrors)
         {
             Try
@@ -284,6 +273,11 @@ Function Add-pfSenseUser
             descr=$FullName
             utype='user' 
             save='Save'
+            
+            # Needed for version >= 2.4.4
+            dashboardcolumns=2
+            webguicss='pfSense.css'
+            
         } # Change the utype to 'system' to create a protected system user
         
         $dictCertData = @{ # Extra form fields when requesting a certificate for the user
@@ -463,6 +457,9 @@ Function Get-pfSenseUser
                 Add-Member -MemberType NoteProperty -Name 'UserID' -Value $uid
                 
                 $objBuilder | 
+                Add-Member -MemberType NoteProperty -Name 'FullName' -Value $user.descr.'#cdata-section'
+                
+                $objBuilder | 
                 Add-Member -MemberType NoteProperty -Name 'Expiration' -Value $user.expires
 
                 $objBuilder | 
@@ -556,7 +553,9 @@ Function Remove-pfSenseUser
                 HelpMessage='User name'
         )] [String] $UserName,
         
-        [Switch] $RevokeCert
+        [Switch] $RevokeCert,
+        
+        [Switch] $Quiet
     )
     
     Begin
@@ -622,6 +621,12 @@ Function Remove-pfSenseUser
         {
             $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
+
+            If ($rawRet.StatusCode -eq 200 -and -not $Quiet)
+            {
+                Invoke-DebugIt -Console -Message 'Success' -Force -Color 'Green' `
+                -Value ('User: {0}, deleted successfully!' -f $UserName)
+            }
         }
         
         Catch
@@ -699,24 +704,24 @@ Function Export-pfSenseUserCert
 
             ## Go through all of the rows in the table
 
-            foreach($row in $rows)
+            Foreach ($row in $rows)
             {
                 $cells = @($row.Cells)
 
                 ## If we've found a table header, remember its titles
 
-                if($cells[0].tagName -eq "TH")
+                If ($cells[0].tagName -eq "TH")
                 {
-                    $titles = @($cells | % { ("" + $_.InnerText).Trim() })
+                    $titles = @($cells | ForEach-Object { ("" + $_.InnerText).Trim() })
 
                     continue
                 }
 
                 ## If we haven't found any table headers, make up names "P1", "P2", etc.
 
-                if(-not $titles)
+                If (-not $titles)
                 {
-                    $titles = @(1..($cells.Count + 2) | % { "P$_" })
+                    $titles = @(1..($cells.Count + 2) | ForEach-Object { "P$_" })
                 }
 
                 ## Now go through the cells in the the row. For each, try to find the
@@ -727,16 +732,14 @@ Function Export-pfSenseUserCert
 
                 $resultObject = [Ordered] @{}
 
-                for($counter = 0; $counter -lt $cells.Count; $counter++)
+                For ($intCounter = 0; $intCounter -lt $cells.Count; $intCounter++)
                 {
 
-                    $title = $titles[$counter]
+                    $title = $titles[$intCounter]
 
-                    if(-not $title) { continue }
+                    If (-not $title) { continue }
 
-
-
-                    $resultObject[$title] = ("" + $cells[$counter].InnerText).Trim()
+                    $resultObject[$title] = ("" + $cells[$intCounter].InnerText).Trim()
 
                 }
 
@@ -829,7 +832,9 @@ Function Revoke-pfSenseUserCert
         
         [ValidateSet('No Status (default)', 'Unspecified', 'Key Compromise', 'CA Compromise', 
                 'Affiliation Change', 'Superseded', 'Cessation of Operation', 'Certificate Hold'
-        )] [String] $Reason = 'Unspecified'
+        )] [String] $Reason = 'Unspecified',
+        
+        [Switch] $Quiet
     )
     
     Begin
@@ -897,6 +902,12 @@ Function Revoke-pfSenseUserCert
         {
             $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
+            
+            If ($rawRet.StatusCode -eq 200 -and -not $Quiet)
+            {
+                Invoke-DebugIt -Console -Message 'Success' -Force -Color 'Green' `
+                -Value ('Certificate: {0}, revoked successfully!' -f $UserName)
+            }
         }
         
         Catch
@@ -1123,6 +1134,288 @@ Function Remove-pfSenseGateway
 }
 
 
+Function Get-pfSenseCa
+{
+    [CmdLetBinding()]
+    Param
+    (
+        [Parameter(Mandatory=$true, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$false, Position=1,
+                HelpMessage='CA name or ID'
+        )] [String] $Name
+    )
+    
+    Begin
+    {
+        # Debugging for scripts
+        $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+    }
+    
+    Process
+    {
+        # Variables
+        $errorActionSilent = 'SilentlyContinue'
+        $objOfHolding = @()
+
+        
+        # Export the server config to XML object
+        [xml] $objXmlFile = Backup-pfSenseConfig -Session $Session -OutputXML 
+        $objXmlCrl = $objXmlFile.pfsense.crl
+        
+        
+        # Don't want the cert info to be displayed by default... too messy.
+        [String[]] $defaultDisplaySet = 'CA','CA_ID', 'Serial', 'CRL'
+        $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet(
+            'DefaultDisplayPropertySet',[string[]]$defaultDisplaySet
+        )
+        $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+
+        
+        # Iterate thru the CAs and return their infos...
+        Foreach ($objCA in $objXmlFile.pfsense.ca)
+        {
+            $objBuilder = New-Object -TypeName PSObject
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CA' -Value $objCA.descr.'#cdata-section'
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CA_ID' -Value $objCA.refid
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'Cert' -Value $objCA.crt
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'Key' -Value $objCA.prv
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'Serial' -Value $objCA.serial
+            
+            $crl = $objXmlCrl | Where-Object {$_.caref -eq $objCA.refid}
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CRL' -Value $crl.descr.'#cdata-section'
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CRL_ID' -Value $crl.refid
+            
+            
+            $objBuilder.PSObject.TypeNames.Insert(0,'CA Information')
+            $objBuilder | Add-Member -MemberType MemberSet PSStandardMembers $PSStandardMembers
+            
+            # Add the builder object to our array object
+            $objOfHolding += $objBuilder
+        }
+        
+        # Returning data... we're done with the work now
+        If ($Name)
+        {
+            $objOfHolding | ? {$_.CA -eq $Name -or $_.CA_ID -eq $Name}
+        }
+        Else
+        {
+            $objOfHolding
+        }
+        
+        # Clean up
+        Remove-Variable objXmlFile -Force -ErrorAction $errorActionSilent -WarningAction $errorActionSilent
+    }
+    
+    End
+    {
+        [GC]::Collect()
+    }
+}
+
+
+Function Export-pfSenseCa
+{
+    [CmdLetBinding()]
+    Param
+    (
+        [Parameter(Mandatory=$True, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$True, Position=1,
+                HelpMessage='CA name or ID'
+        )] [String] $Name,
+        
+        [Parameter(Position=2)]
+        [ValidateScript({
+                    try {
+                        $Folder = Get-Item $($_ | Split-Path -Parent) -ErrorAction Stop
+                    } catch [System.Management.Automation.ItemNotFoundException] {
+                        Throw [System.Management.Automation.ItemNotFoundException] "${_} Maybe there are network issues?"
+                    }
+                    if ($Folder.PSIsContainer) {
+                        $True
+                    } else {
+                        Throw [System.Management.Automation.ValidationMetadataException] "Invalid path '${_}'."
+                    }
+        })]
+        [String] $FilePath = ('{0}\pfSenseCA.cer' -f $($PWD.Path))
+    )
+    
+    Try
+    {
+        $CA = Get-pfSenseCa -Session $Session -Name $Name 
+        
+        $Cert = ConvertFrom-Base64 -InputString $CA.Cert
+        
+        $Cert | Out-File -Encoding ascii -FilePath $FilePath
+    }
+    Catch
+    {
+        Write-Error -Message ('CA {0} not found!' -f $Name)
+    }
+}
+
+
+Function Export-pfSenseCrl
+{
+    [CmdLetBinding()]
+    Param
+    (
+        [Parameter(Mandatory=$True, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$True, Position=1,
+                HelpMessage='CRL name or ID'
+        )] [String] $Name,
+        
+        [Parameter(Position=2)]
+        [ValidateScript({
+                    try {
+                        $Folder = Get-Item $($_ | Split-Path -Parent) -ErrorAction Stop
+                    } catch [System.Management.Automation.ItemNotFoundException] {
+                        Throw [System.Management.Automation.ItemNotFoundException] "${_} Maybe there are network issues?"
+                    }
+                    if ($Folder.PSIsContainer) {
+                        $True
+                    } else {
+                        Throw [System.Management.Automation.ValidationMetadataException] "Invalid path '${_}'."
+                    }
+        })]
+        [String] $FilePath = ('{0}\pfSenseCA.crl' -f $($PWD.Path))
+    )
+    
+    Try
+    {
+        $CRL = Get-pfSenseCrl -Session $Session -Name $Name 
+        
+        $Cert = ConvertFrom-Base64 -InputString $CRL.Data
+        
+        $Cert | Out-File -Encoding ascii -FilePath $FilePath
+    }
+    Catch
+    {
+        Write-Error -Message ('CRL {0} not found!' -f $Name)
+    }
+}
+
+
+Function Get-pfSenseCrl
+{
+    [CmdLetBinding()]
+    Param
+    (
+        [Parameter(Mandatory=$true, Position=0,
+                HelpMessage='Valid/active websession to server'
+        )] [PSObject] $Session,
+        
+        [Parameter(Mandatory=$false, Position=1,
+                HelpMessage='CRL name or ID'
+        )] [String] $Name
+    )
+    
+    Begin
+    {
+        # Debugging for scripts
+        $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+    }
+    
+    Process
+    {
+        # Variables
+        $errorActionSilent = 'SilentlyContinue'
+        $objOfHolding = @()
+        
+        # Export the server config to XML object
+        [xml] $objXmlFile = Backup-pfSenseConfig -Session $Session -OutputXML 
+        $objXmlCa = $objXmlFile.pfsense.ca
+        
+        # Don't want the cert info to be displayed by default... too messy.
+        [String[]] $defaultDisplaySet = 'CRL','CRL_ID','Method','CA'
+        $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet(
+            'DefaultDisplayPropertySet',[string[]]$defaultDisplaySet
+        )
+        $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+
+        
+        # Iterate thru the CAs and return their infos...
+        Foreach ($objCRL in $objXmlFile.pfsense.crl)
+        {
+            $objBuilder = New-Object -TypeName PSObject
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CRL' -Value $objCRL.descr.'#cdata-section'
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CRL_ID' -Value $objCRL.refid
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'Data' -Value $objCRL.text.'#cdata-section'
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'Serial' -Value $objCRL.serial
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'LifeTime' -Value $objCRL.lifetime
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'Method' -Value $objCRL.method
+            
+            $ca = $objXmlCa | Where-Object {$_.refid -eq $objCRL.caref}
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CA' -Value $ca.descr.'#cdata-section'
+            
+            $objBuilder | 
+            Add-Member -MemberType NoteProperty -Name 'CA_ID' -Value $ca.refid
+            
+            $objBuilder.PSObject.TypeNames.Insert(0,'CRL Information')
+            $objBuilder | Add-Member -MemberType MemberSet PSStandardMembers $PSStandardMembers
+            
+            # Add the builder object to our array object
+            $objOfHolding += $objBuilder
+        }
+        
+        # Returning data... we're done with the work now
+        If ($Name)
+        {
+            $objOfHolding | ? {$_.CRL -eq $Name -or $_.CRL_ID -eq $Name}
+        }
+        Else
+        {
+            $objOfHolding
+        }
+        
+        # Clean up
+        Remove-Variable objXmlFile -Force -ErrorAction $errorActionSilent -WarningAction $errorActionSilent
+    }
+    
+    End
+    {
+        [GC]::Collect()
+    }
+}
+
+
 #endregion
 
 #region Firewall functions
@@ -1160,6 +1453,14 @@ Function Remove-pfSenseNatRule
 {
     
 }
+
+
+#endregion
+
+#region Snort functions
+
+
+
 
 
 #endregion
