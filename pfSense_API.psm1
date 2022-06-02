@@ -774,7 +774,7 @@ Function Export-pfSenseUserCert
         $objTable = Extract-WebTable -WebRequest $request -TableNumber 0
         
         # get the ID of the user on the page
-        $userID = $objTable.IndexOf(($objTable | Where-Object {$_.name -match $UserName}))
+        $userID = $objTable.IndexOf(($objTable | Where-Object {$_.name -match $UserName})[0])
         
         Switch ($CertAction)
         {
