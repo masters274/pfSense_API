@@ -1,7 +1,7 @@
 # pfSense_API
 Automate your pfSense management
 
-The Powershell Gallery gets updated before GitHub: https://www.powershellgallery.com/packages/pfSense
+GitHub actions now publishes this module to the Powershell Gallery.
 
 Install from the Powershell Gallery: Install-Module -Name pfSense
 
