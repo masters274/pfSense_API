@@ -768,13 +768,15 @@ Function Export-pfSenseUserCert
         
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
         
-        # Get the page contents so we can parse the table. We'll need the iterated ID based on the web table.
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        # # Get the page contents so we can parse the table. We'll need the iterated ID based on the web table.
+        # $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
         
-        $objTable = Extract-WebTable -WebRequest $request -TableNumber 0
+        # $objTable = Extract-WebTable -WebRequest $request -TableNumber 0
         
-        # get the ID of the user on the page
-        $userID = $objTable.IndexOf(($objTable | Where-Object {$_.name -match $UserName})[0])
+        # # get the ID of the user on the page
+        # $userID = $objTable.IndexOf(($objTable | Where-Object {$_.name -match $UserName})[0])
+
+        $userId = Get-pfSenseUser -Session $Session -UserName $UserName -Detail | Select-Object -ExpandProperty Cert_ID
         
         Switch ($CertAction)
         {
