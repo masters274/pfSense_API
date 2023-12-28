@@ -276,8 +276,8 @@ Function Add-pfSenseUser {
             name        = "$($UserName)_cert"
             caref       = $CA
             keylen      = $KeyLength
-            lifetime    = $LifeTime
             digest_alg  = $DigestAlgorithm
+            lifetime    = $LifeTime
         }
             
         If ($Certificate) { # Should we request a cert from the CA?
