@@ -634,7 +634,8 @@ Function Export-pfSenseUserCert {
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
 
         function Script:Extract-CertTableData {
-
+            # Code from Lee Holmes (Modified)
+            # http://www.leeholmes.com/blog/2015/01/05/extracting-tables-from-powershells-invoke-webrequest/
             param (
 
                 [Parameter(Mandatory)]
