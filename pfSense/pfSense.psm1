@@ -110,22 +110,20 @@ public class InSecureWebPolicy : ICertificatePolicy
     }
 }
 '@
+                    $pol = [System.Net.ServicePointManager]::CertificatePolicy
+                    [System.Net.ServicePointManager]::CertificatePolicy = New-Object -TypeName InSecureWebPolicy
+
+                    <#
+                            .NOTE: There is a timeout value to using this option. At the end of this function the
+                            policy is returned to its original configuration. PowerShell takes a little time, almost
+                            like cache, to recognize the reversion. Therefore this option is only good for fast
+                            scripting, and not for coding on the command line.
+
+                            It is recommended that you import the cert into your trusted certificates store
+                    #>
                 }
                 Catch
                 {}
-
-                $pol = [System.Net.ServicePointManager]::CertificatePolicy
-                [System.Net.ServicePointManager]::CertificatePolicy = New-Object -TypeName InSecureWebPolicy
-
-                <#
-                        .NOTE: There is a timeout value to using this option. At the end of this function the
-                        policy is returned to its original configuration. PowerShell takes a little time, almost
-                        like cache, to recognize the reversion. Therefore this option is only good for fast
-                        scripting, and not for coding on the command line.
-
-                        It is recommended that you import the cert into your trusted certificates store
-                #>
-
             }
         }
     }
