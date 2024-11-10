@@ -163,7 +163,7 @@ public class InSecureWebPolicy : ICertificatePolicy
     }
 
     End {
-        [System.Net.ServicePointManager]::CertificatePolicy = $pol
+        if ($pol) { [System.Net.ServicePointManager]::CertificatePolicy = $pol }
     }
 }
 
