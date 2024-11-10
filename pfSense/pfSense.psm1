@@ -67,6 +67,8 @@ Function Connect-pfSense {
         # TODO: use to avoid asking if we should ignore self-signed web certs
         $Script:boolForce = $PSBoundParameters.Force.IsPresent
 
+        $sessionParams = @{}
+
         # pfSense requires TLS1.2 This is not an available security protocol in Invoke-WebRequest by default
         # TODO: use available function  (Set-WebSecurityProtocol)
         If ([Net.ServicePointManager]::SecurityProtocol -notmatch 'TLS12' -and -not $NoTLS) {
@@ -89,8 +91,14 @@ Function Connect-pfSense {
         # Require that core be updated
         # Add a note on how to revert the security policy back to the original, without restarting PowerShell
         If ($IgnoreCertificateErrors) {
-            Try {
-                Add-Type -TypeDefinition @'
+            if ($PSVersionTable.PSEdition -eq 'Core') {
+                # ICertificatePolicy is deprecated in PWSH Core. IWR now has an option... 
+
+                $sessionParams.Add('SkipCertificateCheck',$true)
+            }
+            else {
+                Try {
+                    Add-Type -TypeDefinition @'
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 
@@ -102,22 +110,23 @@ public class InSecureWebPolicy : ICertificatePolicy
     }
 }
 '@
+                }
+                Catch
+                {}
+
+                $pol = [System.Net.ServicePointManager]::CertificatePolicy
+                [System.Net.ServicePointManager]::CertificatePolicy = New-Object -TypeName InSecureWebPolicy
+
+                <#
+                        .NOTE: There is a timeout value to using this option. At the end of this function the
+                        policy is returned to its original configuration. PowerShell takes a little time, almost
+                        like cache, to recognize the reversion. Therefore this option is only good for fast
+                        scripting, and not for coding on the command line.
+
+                        It is recommended that you import the cert into your trusted certificates store
+                #>
+
             }
-            Catch
-            {}
-
-            $pol = [System.Net.ServicePointManager]::CertificatePolicy
-            [System.Net.ServicePointManager]::CertificatePolicy = New-Object -TypeName InSecureWebPolicy
-
-            <#
-                    .NOTE: There is a timeout value to using this option. At the end of this function the
-                    policy is returned to its original configuration. PowerShell takes a little time, almost
-                    like cache, to recognize the reversion. Therefore this option is only good for fast
-                    scripting, and not for coding on the command line.
-
-                    It is recommended that you import the cert into your trusted certificates store
-            #>
-
         }
     }
 
@@ -129,6 +138,7 @@ public class InSecureWebPolicy : ICertificatePolicy
         $dictOptions = @{
             host  = $Server
             NoTLS = $([bool] $NoTLS)
+            IgnoreCertificateErrors = $([bool] $IgnoreCertificateErrors)
         }
 
         If ($NoTLS) { # highway to tha Danger Zone!!!
@@ -146,7 +156,7 @@ public class InSecureWebPolicy : ICertificatePolicy
             __csrf_magic         = $($request.InputFields[0].Value)
         }
 
-        Invoke-WebRequest -Uri $uri -Body $webCredential -Method Post -SessionVariable pfWebSession | Out-Null
+        Invoke-WebRequest @sessionParams -Uri $uri -Body $webCredential -Method Post -SessionVariable pfWebSession | Out-Null
 
         $retObject += $pfWebSession
         $retObject += $dictOptions
@@ -237,12 +247,17 @@ Function Add-pfSenseUser {
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
 
         $Password = $UserPass
+
+        $sessionParams = @{}
+
+        if ($session.IgnoreCertificateErrors -and $PSVersionTable.PSEdition -eq 'Core') { $sessionParams.Add('SkipCertificateCheck',$true) }
     }
 
     Process {
         # Variables
         $Server = $Session.host
         [bool] $NoTLS = $Session.NoTLS
+
         [Microsoft.PowerShell.Commands.WebRequestSession] $webSession = $Session[0]
         $uri = 'https://{0}/system_usermanager.php' -f $Server
 
@@ -254,7 +269,7 @@ Function Add-pfSenseUser {
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
 
         # pfSense requires a lot of magic.... ++ foreach POST
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $request = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
 
         $dictPostData = @{
             __csrf_magic     = $($request.InputFields[0].Value)
@@ -289,7 +304,7 @@ Function Add-pfSenseUser {
         Invoke-DebugIt -Console -Message '[INFO]' -Value ('Post URI: {0}' -f $uri)
 
         Try {
-            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
+            $rawRet = Invoke-WebRequest @sessionParams -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
 
             If ($rawRet.StatusCode -eq 200 -and -not $Quiet) {
@@ -343,6 +358,10 @@ Function Get-pfSenseUser {
                 }
             }
         }
+
+        $sessionParams = @{}
+
+        if ($session.IgnoreCertificateErrors -and $PSVersionTable.PSEdition -eq 'Core') { $sessionParams.Add('SkipCertificateCheck',$true) }
     }
 
     Process {
@@ -365,7 +384,7 @@ Function Get-pfSenseUser {
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
 
         # pfSense requires a lot of magic.... ++ foreach POST
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $request = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
 
         # Get a list of deletable users.
         $users = $request.Links | Where-Deleteable # Note: can't delete yourself
@@ -383,7 +402,7 @@ Function Get-pfSenseUser {
             If ($CertInfo) {
 
                 $userEditUri = $uri + ('?act=edit&userid={0}' -f $($uid.Split('=')[1]))
-                $userReq = Invoke-WebRequest -Uri $userEditUri -WebSession $webSession -Method Get
+                $userReq = Invoke-WebRequest @sessionParams -Uri $userEditUri -WebSession $webSession -Method Get
 
                 $cert = $userReq.ParsedHtml.frames.document.body.outerHTML.Split("`n") |
                 Where-Object { $_ -match "Remove this certificate association" }
@@ -524,6 +543,10 @@ Function Remove-pfSenseUser {
     Begin {
         # Debugging for scripts
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+
+        $sessionParams = @{}
+
+        if ($session.IgnoreCertificateErrors -and $PSVersionTable.PSEdition -eq 'Core') { $sessionParams.Add('SkipCertificateCheck',$true) }
     }
 
     Process {
@@ -543,7 +566,7 @@ Function Remove-pfSenseUser {
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
 
         # pfSense requires a lot of magic.... ++ foreach POST
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $request = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
 
         # Get a list of deletable users.
         $objUser = Get-pfSenseUser -Session $Session -Detail -UserName $UserName
@@ -575,7 +598,7 @@ Function Remove-pfSenseUser {
         }
 
         Try {
-            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
+            $rawRet = Invoke-WebRequest @sessionParams -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
 
             If ($rawRet.StatusCode -eq 200 -and -not $Quiet) {
@@ -694,6 +717,10 @@ Function Export-pfSenseUserCert {
                 [PSCustomObject] $resultObject
             }
         }
+
+        $sessionParams = @{}
+
+		if ($session.IgnoreCertificateErrors -and $PSVersionTable.PSEdition -eq 'Core') { $sessionParams.Add('SkipCertificateCheck',$true) }
     }
 
     Process {
@@ -713,7 +740,7 @@ Function Export-pfSenseUserCert {
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
 
         # Get the page contents so we can parse the table. We'll need the iterated ID based on the web table.
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $request = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
         $objTable = Extract-CertTableData -WebRequest $request -TableNumber 0
         $userID = $objTable | Where-Object { $_.Name -match $UserName } | Select-Object -ExpandProperty UserID
 
@@ -747,7 +774,7 @@ Function Export-pfSenseUserCert {
 
         Invoke-DebugIt -Console -Message '[INFO]' -Value ('URI = {0}' -f $uri.ToString())
 
-        $exRequest = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $exRequest = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
 
         ConvertFrom-HexToFile -HexString $exRequest.Content -FilePath $FilePath
     }
@@ -777,7 +804,9 @@ Function Revoke-pfSenseUserCert {
     )
 
     Begin {
+        $sessionParams = @{}
 
+		if ($session.IgnoreCertificateErrors -and $PSVersionTable.PSEdition -eq 'Core') { $sessionParams.Add('SkipCertificateCheck',$true) }
     }
 
     Process {
@@ -819,7 +848,7 @@ Function Revoke-pfSenseUserCert {
 
 
         # pfSense requires a lot of magic.... ++ foreach POST
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $request = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
 
         # Dictionary submitted as body in our POST request
         $dictPostData = @{
@@ -833,7 +862,7 @@ Function Revoke-pfSenseUserCert {
         }
 
         Try {
-            $rawRet = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
+            $rawRet = Invoke-WebRequest @sessionParams -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop |
             Out-Null
 
             If ($rawRet.StatusCode -eq 200 -and -not $Quiet) {
@@ -939,6 +968,10 @@ Function Backup-pfSenseConfig {
     Begin {
         # Debugging for scripts
         $Script:boolDebug = $PSBoundParameters.Debug.IsPresent
+
+        $sessionParams = @{}
+
+		if ($session.IgnoreCertificateErrors -and $PSVersionTable.PSEdition -eq 'Core') { $sessionParams.Add('SkipCertificateCheck',$true) }
     }
 
     Process {
@@ -956,7 +989,7 @@ Function Backup-pfSenseConfig {
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
 
         # pfSense requires a lot of magic.... ++ foreach POST
-        $request = Invoke-WebRequest -Uri $uri -Method Get -WebSession $webSession
+        $request = Invoke-WebRequest @sessionParams -Uri $uri -Method Get -WebSession $webSession
 
 
         $dictPostData = @{
@@ -978,7 +1011,7 @@ Function Backup-pfSenseConfig {
         }
 
         Try {
-            $rawRequest = Invoke-WebRequest -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop
+            $rawRequest = Invoke-WebRequest @sessionParams -Uri $uri -Method Post -Body $dictPostData -WebSession $webSession -EA Stop
         }
 
         Catch {
