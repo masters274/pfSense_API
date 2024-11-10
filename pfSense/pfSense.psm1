@@ -146,7 +146,7 @@ public class InSecureWebPolicy : ICertificatePolicy
 
         Invoke-DebugIt -Console -Message '[INFO]' -Value $uri.ToString()
 
-        $request = iwr -Uri $uri
+        $request = Invoke-WebRequest @sessionParams -Uri $uri
 
         $webCredential = @{login = 'Login'
             usernamefld          = $Credential.GetNetworkCredential().UserName
