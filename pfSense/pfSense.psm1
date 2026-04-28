@@ -851,7 +851,10 @@ Function Revoke-pfSenseUserCert {
         # Dictionary submitted as body in our POST request
         $dictPostData = @{
             __csrf_magic = $($request.InputFields[0].Value)
-            certref      = $($user.Cert_ID)
+            descr        = $($request.InputFields[1].Value)
+            lifetime     = $($request.InputFields[2].Value)
+            serial       = $($request.InputFields[3].Value)
+            'certref[]'  = $($user.Cert_ID)
             crlreason    = $($dictReason["$Reason"])
             submit       = 'Add'
             id           = $($user.CRL_ID)
